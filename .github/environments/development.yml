@@ -1,0 +1,7 @@
+name: development
+description: Development environment for feature testing
+deployment_branch: develop
+protection_rules:
+  - required_reviewers:
+      users: [dev-lead]
+  - wait_timer: 0

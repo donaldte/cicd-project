@@ -1,0 +1,8 @@
+name: production
+description: Production environment for live deployment
+deployment_branch: main
+protection_rules:
+  - required_reviewers:
+      users: [cto, dev-lead, qa-lead]
+  - required_approvals: 2
+  - wait_timer: 10
