@@ -4,7 +4,7 @@ services:
   db:
     image: postgres:13
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_prod:/var/lib/postgresql/data
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -15,7 +15,7 @@ services:
     image: ${ECR_REGISTRY}/${ECR_REPOSITORY}-web:latest
     command: ./entrypoint.sh gunicorn --bind 0.0.0.0:8000 myproject.wsgi:application
     volumes:
-      - static_volume:/app/staticfiles
+      - static_volume_prod:/app/staticfiles
     environment:
       - DEBUG=${DEBUG}
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
@@ -31,7 +31,7 @@ services:
   nginx:
     image: ${ECR_REGISTRY}/${ECR_REPOSITORY}-nginx:latest
     volumes:
-      - static_volume:/app/staticfiles
+      - static_volume_prod:/app/staticfiles
     depends_on:
       - web
     ports:
@@ -39,5 +39,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres_data:
-  static_volume:
+  postgres_data_prod:
+  static_volume_prod:
