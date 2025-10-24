@@ -12,7 +12,7 @@ env:
   AWS_REGION: eu-west-1
   ECR_REPOSITORY: django-rest-app
   PROJECT_NAME: django-rest-aws
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: '3.10'
   POSTGRES_VERSION: '13'
 
 jobs:
