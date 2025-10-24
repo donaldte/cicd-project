@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:13
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    restart: unless-stopped
+
+  web:
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY}-web:latest
+    command: ./entrypoint.sh gunicorn --bind 0.0.0.0:8000 myproject.wsgi:application
+    volumes:
+      - static_volume:/app/staticfiles
+    environment:
+      - DEBUG=${DEBUG}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  nginx:
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY}-nginx:latest
+    volumes:
+      - static_volume:/app/staticfiles
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  static_volume:

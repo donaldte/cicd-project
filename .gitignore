@@ -1,0 +1,12 @@
+venv
+.env
+.env.prod
+.env.dev
+
+# pycache
+__pycache__
+
+# coverage
+htmlcov
+.coverage
+coverage.xml    

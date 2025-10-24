@@ -1,0 +1,57 @@
+name: "Deploy to EC2"
+
+inputs:
+  environment:
+    description: 'Target environment'
+    required: true
+  image-tag:
+    description: 'Docker image tag'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Deploy to ${{ inputs.environment }}
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.ssh-host }}
+        username: ${{ secrets.ssh-user }}
+        key: ${{ secrets.ssh-private-key }}
+        script_stop: true
+        script: |
+          set -e
+          
+          echo "🔄 Deploying to ${{ inputs.environment }}..."
+          
+          # Create app directory
+          mkdir -p /home/${{ secrets.ssh-user }}/app
+          cd /home/${{ secrets.ssh-user }}/app
+          
+          # Login to ECR
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+          docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+          
+          # Pull latest images
+          docker-compose -f docker-compose.${{ inputs.environment }}.yml pull
+          
+          # Stop and remove old containers
+          docker-compose -f docker-compose.${{ inputs.environment }}.yml down
+          
+          # Start new containers
+          docker-compose -f docker-compose.${{ inputs.environment }}.yml up -d
+          
+          # Run health check
+          chmod +x scripts/health-check.sh
+          ./scripts/health-check.sh
+          
+          # Cleanup
+          docker system prune -f
+          
+          echo "✅ Deployment completed successfully!"
+
+    - name: Verify deployment
+      run: |
+        echo "Waiting for services to be healthy..."
+        sleep 30
+        curl -f http://${{ secrets.ssh-host }}/api/books/ || exit 1
+        echo "✅ Service is responding correctly"

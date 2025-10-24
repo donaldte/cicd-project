@@ -1,0 +1,35 @@
+name: "Slack Notification"
+
+inputs:
+  status:
+    description: 'Workflow status'
+    required: true
+  environment:
+    description: 'Deployment environment'
+    required: false
+    default: 'unknown'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Send Slack notification
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ inputs.status }}
+        channel: '#deployments'
+        text: |
+          🚀 *Deployment ${{ inputs.status }}* 
+          *Environment*: ${{ inputs.environment }}
+          *Repository*: ${{ github.repository }}
+          *Branch*: ${{ github.ref_name }}
+          *Commit*: <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{
+          github.sha }}>
+          *By*: ${{ github.actor }}
+        fields: |
+          [
+            {"title": "Workflow", "value": "${{ github.workflow }}", "short": true},
+            {"title": "Duration", "value": "${{ job.container.duration }}", "short": true}
+          ]
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.slack-webhook }}
+      if: always()

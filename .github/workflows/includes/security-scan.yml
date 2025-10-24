@@ -1,0 +1,39 @@
+name: "Security Scan"
+
+inputs:
+  python-version:
+    description: 'Python version'
+    required: true
+    default: '3.11'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: ./.github/workflows/includes/setup-python.yml
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Run Snyk to check for vulnerabilities
+      uses: snyk/actions/python@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        args: --severity-threshold=high
+
+    - name: Run SAST with Bandit
+      shell: bash
+      run: |
+        pip install bandit
+        bandit -r app/ -f html -o bandit-report.html
+
+    - name: Upload security reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-reports
+        path: |
+          bandit-report.html
+        retention-days: 30

@@ -1,0 +1,46 @@
+name: "Run Tests"
+
+inputs:
+  database-url:
+    description: 'Database URL'
+    required: true
+  test-coverage:
+    description: 'Enable test coverage'
+    required: false
+    default: 'true'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run database migrations
+      shell: bash
+      run: |
+        cd app
+        python manage.py makemigrations
+        python manage.py migrate
+      env:
+        DATABASE_URL: ${{ inputs.database-url }}
+        DJANGO_SECRET_KEY: 'test-secret-key'
+        DEBUG: 'True'
+
+    - name: Run tests with coverage
+      shell: bash
+      run: |
+        cd app
+        if [ "${{ inputs.test-coverage }}" = "true" ]; then
+          pytest --cov=myproject --cov-report=xml --cov-report=html -v
+        else
+          pytest -v
+        fi
+      env:
+        DATABASE_URL: ${{ inputs.database-url }}
+        DJANGO_SECRET_KEY: 'test-secret-key'
+        DEBUG: 'True'
+
+    - name: Upload coverage reports
+      if: inputs.test-coverage == 'true'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./app/coverage.xml
+        flags: unittests
+        name: codecov-umbrella

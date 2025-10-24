@@ -1,0 +1,169 @@
+name: 🚀 Django CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [published]
+
+# Variables globales et configuration
+env:
+  &base-config
+    AWS_REGION: eu-west-1
+    ECR_REPOSITORY: django-rest-app
+    PROJECT_NAME: django-rest-aws
+    PYTHON_VERSION: '3.11'
+    POSTGRES_VERSION: '13'
+
+  # Configuration environnement spécifique
+  <<: 
+    - *base-config
+    - &prod-config
+        ENVIRONMENT: production
+        DJANGO_SETTINGS_MODULE: myproject.settings.production
+    - &dev-config
+        ENVIRONMENT: development  
+        DJANGO_SETTINGS_MODULE: myproject.settings.development
+
+# Définitions de jobs réutilisables
+job-definitions:
+  test-job: &test-job
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        python-version: [3.9, 3.10, 3.11]
+    services:
+      postgres: *postgres-service
+
+  deploy-job: &deploy-job
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'release' && 'production' || 'staging' }}
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      <<: *prod-config
+
+# Configuration des services
+postgres-service: &postgres-service
+  image: postgres:${{ env.POSTGRES_VERSION }}
+  env:
+    POSTGRES_USER: testuser
+    POSTGRES_PASSWORD: testpass
+    POSTGRES_DB: testdb
+  options: >-
+    --health-cmd pg_isready
+    --health-interval 10s
+    --health-timeout 5s
+    --health-retries 5
+  ports:
+    - 5432:5432
+
+jobs:
+  # === QUALITÉ DU CODE ===
+  lint:
+    name: "🔍 Lint & Code Quality"
+    uses: ./.github/workflows/includes/lint-codeql.yml
+    with:
+      python-version: ${{ env.PYTHON_VERSION }}
+
+  # === TESTS ===
+  unit-tests:
+    name: "🧪 Unit Tests - Python ${{ matrix.python-version }}"
+    <<: *test-job
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: ./.github/workflows/includes/setup-python.yml
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run Tests
+        uses: ./.github/workflows/includes/run-tests.yml
+        with:
+          database-url: postgresql://testuser:testpass@localhost:5432/testdb
+
+  integration-tests:
+    name: "🔗 Integration Tests"
+    <<: *test-job
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Environment
+        run: chmod +x .github/scripts/setup-environment.sh && ./.github/scripts/setup-environment.sh
+
+      - name: Run Integration Tests
+        run: |
+          docker-compose -f docker-compose.test.yml up --abort-on-container-exit --exit-code-from web
+
+  # === SÉCURITÉ ===
+  security-scan:
+    name: "🛡️ Security Scan"
+    uses: ./.github/workflows/includes/security-scan.yml
+    with:
+      python-version: ${{ env.PYTHON_VERSION }}
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # === BUILD & PUSH ===
+  build-and-push:
+    name: "🏗️ Build & Push to ECR"
+    needs: [unit-tests, integration-tests, security-scan]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'release'
+    uses: ./.github/workflows/includes/build-push-ecr.yml
+    with:
+      environment: ${{ needs.deploy-prep.outputs.environment }}
+      version: ${{ github.sha }}
+    secrets:
+      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  # === DÉPLOIEMENT ===
+  deploy-production:
+    name: "🚀 Deploy to Production"
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' || github.event_name == 'release'
+    <<: *deploy-job
+    uses: ./.github/workflows/includes/deploy-ec2.yml
+    with:
+      environment: production
+      image-tag: ${{ github.sha }}
+    secrets:
+      ssh-private-key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
+      ssh-user: ${{ secrets.AWS_SSH_USER }}
+      ssh-host: ${{ secrets.AWS_EC2_HOST }}
+
+  deploy-staging:
+    name: "🌱 Deploy to Staging"
+    needs: build-and-push
+    if: github.ref == 'refs/heads/develop'
+    <<: *deploy-job
+    uses: ./.github/workflows/includes/deploy-ec2.yml
+    with:
+      environment: staging
+      image-tag: ${{ github.sha }}
+    secrets:
+      ssh-private-key: ${{ secrets.AWS_SSH_PRIVATE_KEY_STAGING }}
+      ssh-user: ${{ secrets.AWS_SSH_USER_STAGING }}
+      ssh-host: ${{ secrets.AWS_EC2_HOST_STAGING }}
+
+  # === NOTIFICATIONS ===
+  notify:
+    name: "📢 Notification"
+    needs: [deploy-production, deploy-staging]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Slack Notification
+        uses: ./.github/workflows/includes/slack-notification.yml
+        with:
+          status: ${{ needs.deploy-production.result || needs.deploy-staging.result }}
+          environment: ${{ needs.deploy-production.result && 'production' || 'staging' }}
+        secrets:
+          slack-webhook: ${{ secrets.SLACK_WEBHOOK }}
