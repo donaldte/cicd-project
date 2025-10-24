@@ -6,22 +6,22 @@ services:
     volumes:
       - postgres_data_dev:/var/lib/postgresql/data
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-django_app_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-dev_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password}
     restart: unless-stopped
 
   web:
-    image: ${ECR_REGISTRY}/${ECR_REPOSITORY}-web:latest
+    image: ${ECR_REGISTRY:-123456789012.dkr.ecr.eu-west-1.amazonaws.com}/django-rest-app-web:latest
     command: ./entrypoint.sh gunicorn --bind 0.0.0.0:8000 myproject.wsgi:application
     volumes:
       - static_volume_dev:/app/staticfiles
     environment:
-      - DEBUG=${DEBUG}
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DEBUG=${DEBUG:-True}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key}
+      - POSTGRES_DB=${POSTGRES_DB:-django_app_dev}
+      - POSTGRES_USER=${POSTGRES_USER:-dev_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-dev_password}
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
     depends_on:
@@ -29,7 +29,7 @@ services:
     restart: unless-stopped
 
   nginx:
-    image: ${ECR_REGISTRY}/${ECR_REPOSITORY}-nginx:latest
+    image: ${ECR_REGISTRY:-123456789012.dkr.ecr.eu-west-1.amazonaws.com}/django-rest-app-nginx:latest
     volumes:
       - static_volume_dev:/app/staticfiles
     depends_on:

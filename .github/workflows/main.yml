@@ -53,7 +53,7 @@ jobs:
     
     services:
       postgres:
-        image: postgres:${{ env.POSTGRES_VERSION }}
+        image: postgres:13
         env:
           POSTGRES_USER: testuser
           POSTGRES_PASSWORD: testpass
@@ -157,16 +157,27 @@ jobs:
     needs: [unit-tests, security-scan]
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.event_name == 'release'
     
-    strategy:
-      matrix:
-        include:
-          - environment: development
-            if: github.ref == 'refs/heads/develop'
-          - environment: production
-            if: github.ref == 'refs/heads/main' || github.event_name == 'release'
+    outputs:
+      image-tag: ${{ steps.get-tag.outputs.image-tag }}
+      environment: ${{ steps.get-env.outputs.environment }}
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Determine environment and tag
+      id: get-env
+      run: |
+        if [ "${{ github.ref }}" == "refs/heads/develop" ]; then
+          echo "environment=development" >> $GITHUB_OUTPUT
+        elif [ "${{ github.ref }}" == "refs/heads/main" ] || [ "${{ github.event_name }}" == "release" ]; then
+          echo "environment=production" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Get image tag
+      id: get-tag
+      run: |
+        SHORT_SHA=${GITHUB_SHA:0:8}
+        echo "image-tag=$SHORT_SHA" >> $GITHUB_OUTPUT
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -187,11 +198,11 @@ jobs:
         push: true
         tags: |
           ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}-web:latest
-          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}-web:${{ github.sha }}
+          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}-web:${{ steps.get-tag.outputs.image-tag }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
         build-args: |
-          ENVIRONMENT=${{ matrix.environment }}
+          ENVIRONMENT=${{ steps.get-env.outputs.environment }}
 
     - name: Build and push Nginx image
       uses: docker/build-push-action@v5
@@ -201,14 +212,14 @@ jobs:
         push: true
         tags: |
           ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}-nginx:latest
-          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}-nginx:${{ github.sha }}
+          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}-nginx:${{ steps.get-tag.outputs.image-tag }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
     - name: Generate deployment info
       run: |
-        echo "Environment: ${{ matrix.environment }}"
-        echo "Image SHA: ${{ github.sha }}"
+        echo "Environment: ${{ steps.get-env.outputs.environment }}"
+        echo "Image Tag: ${{ steps.get-tag.outputs.image-tag }}"
         echo "ECR Registry: ${{ steps.login-ecr.outputs.registry }}"
 
   # === DÉPLOIEMENT DEVELOPMENT ===
@@ -222,6 +233,13 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
     - name: Deploy to Development
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -232,6 +250,8 @@ jobs:
           set -e
           echo "🔄 Deploying to Development..."
           
+          # Create app directory if it doesn't exist
+          mkdir -p /home/${{ secrets.AWS_SSH_USER_DEV }}/app
           cd /home/${{ secrets.AWS_SSH_USER_DEV }}/app
           
           # Login to ECR
@@ -239,7 +259,7 @@ jobs:
           docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
           
           # Pull latest images
-          docker-compose -f docker-compose.development.yml pull
+          docker-compose -f docker-compose.development.yml pull web nginx
           
           # Stop and remove old containers
           docker-compose -f docker-compose.development.yml down
@@ -247,14 +267,27 @@ jobs:
           # Start new containers
           docker-compose -f docker-compose.development.yml up -d
           
-          # Run health check
+          # Wait for services to be ready
+          echo "⏳ Waiting for services to be healthy..."
           sleep 30
-          curl -f http://localhost/api/books/ || exit 1
           
-          # Cleanup
-          docker system prune -f
+          # Health check
+          echo "🏥 Running health check..."
+          MAX_RETRIES=10
+          for i in $(seq 1 $MAX_RETRIES); do
+            if curl -f http://localhost/api/books/ > /dev/null 2>&1; then
+              echo "✅ Health check passed!"
+              break
+            fi
+            echo "⏳ Health check attempt $i/$MAX_RETRIES failed, retrying..."
+            sleep 10
+          done
           
-          echo "✅ Development deployment completed!"
+          # Cleanup old images
+          echo "🧹 Cleaning up unused images..."
+          docker image prune -f
+          
+          echo "✅ Development deployment completed successfully!"
 
   # === DÉPLOIEMENT PRODUCTION ===
   deploy-production:
@@ -267,6 +300,13 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
     - name: Deploy to Production
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -277,6 +317,8 @@ jobs:
           set -e
           echo "🚀 Deploying to Production..."
           
+          # Create app directory if it doesn't exist
+          mkdir -p /home/${{ secrets.AWS_SSH_USER_PROD }}/app
           cd /home/${{ secrets.AWS_SSH_USER_PROD }}/app
           
           # Login to ECR
@@ -284,7 +326,7 @@ jobs:
           docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
           
           # Pull latest images
-          docker-compose -f docker-compose.production.yml pull
+          docker-compose -f docker-compose.production.yml pull web nginx
           
           # Stop and remove old containers
           docker-compose -f docker-compose.production.yml down
@@ -292,14 +334,27 @@ jobs:
           # Start new containers
           docker-compose -f docker-compose.production.yml up -d
           
-          # Run health check
+          # Wait for services to be ready
+          echo "⏳ Waiting for services to be healthy..."
           sleep 30
-          curl -f http://localhost/api/books/ || exit 1
           
-          # Cleanup
-          docker system prune -f
+          # Health check
+          echo "🏥 Running health check..."
+          MAX_RETRIES=10
+          for i in $(seq 1 $MAX_RETRIES); do
+            if curl -f http://localhost/api/books/ > /dev/null 2>&1; then
+              echo "✅ Health check passed!"
+              break
+            fi
+            echo "⏳ Health check attempt $i/$MAX_RETRIES failed, retrying..."
+            sleep 10
+          done
           
-          echo "✅ Production deployment completed!"
+          # Cleanup old images
+          echo "🧹 Cleaning up unused images..."
+          docker image prune -f
+          
+          echo "✅ Production deployment completed successfully!"
 
   # === NOTIFICATIONS ===
   notify:
@@ -310,5 +365,25 @@ jobs:
     steps:
       - name: Send workflow status
         run: |
-          echo "Workflow completed with status: ${{ needs.deploy-production.result || needs.deploy-development.result || 'success' }}"
-          echo "View workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          DEPLOYMENT_RESULT="${{ needs.deploy-production.result || needs.deploy-development.result || 'success' }}"
+          ENVIRONMENT=""
+          if [ "${{ needs.deploy-production.result }}" != "" ]; then
+            ENVIRONMENT="production"
+          elif [ "${{ needs.deploy-development.result }}" != "" ]; then
+            ENVIRONMENT="development"
+          fi
+          
+          echo "🚀 Deployment Summary"
+          echo "Status: $DEPLOYMENT_RESULT"
+          echo "Environment: $ENVIRONMENT"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Workflow Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          
+          if [ "$DEPLOYMENT_RESULT" == "success" ]; then
+            echo "✅ Deployment completed successfully!"
+          else
+            echo "❌ Deployment failed!"
+            exit 1
+          fi

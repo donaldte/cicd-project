@@ -12,12 +12,12 @@ services:
     restart: unless-stopped
 
   web:
-    image: ${ECR_REGISTRY}/${ECR_REPOSITORY}-web:latest
+    image: ${ECR_REGISTRY}/django-rest-app-web:latest
     command: ./entrypoint.sh gunicorn --bind 0.0.0.0:8000 myproject.wsgi:application
     volumes:
       - static_volume_prod:/app/staticfiles
     environment:
-      - DEBUG=${DEBUG}
+      - DEBUG=${DEBUG:-False}
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
@@ -29,7 +29,7 @@ services:
     restart: unless-stopped
 
   nginx:
-    image: ${ECR_REGISTRY}/${ECR_REPOSITORY}-nginx:latest
+    image: ${ECR_REGISTRY}/django-rest-app-nginx:latest
     volumes:
       - static_volume_prod:/app/staticfiles
     depends_on:
