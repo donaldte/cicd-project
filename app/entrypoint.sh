@@ -14,5 +14,5 @@ python manage.py migrate
 # Collecter les fichiers statiques
 python manage.py collectstatic --noinput
 
-# Démarrer Gunicorn
+# Démarrer
 exec "$@"
